@@ -27,8 +27,8 @@ from .PupyCategories import PupyCategories
 from network.conf import transports
 from pupylib.utils.rpyc_utils import obtain
 from .PupyTriggers import on_connect
-from network.utils import parse_transports_args
-from network.base_launcher import LauncherError
+from network.lib.utils import parse_transports_args
+from network.lib.base_launcher import LauncherError
 import network.conf
 import rpyc
 import shlex
@@ -322,38 +322,42 @@ class PupyServer(threading.Thread):
 
     def connect_on_client(self, launcher_args):
         """ connect on a client that would be running a bind payload """
-        launcher=network.conf.launchers["connect"]()
+        launcher=network.conf.launchers["connect"](connect_on_bind_payload=True)
         try:
             launcher.parse_args(shlex.split(launcher_args))
         except LauncherError as e:
             launcher.arg_parser.print_usage()
             return
         stream=launcher.iterate().next()
+        self.handler.display_info("Connecting ...")
         conn=rpyc.utils.factory.connect_stream(stream, PupyService.PupyBindService, {})
         bgsrv=rpyc.BgServingThread(conn)
-        bgsrv.SLEEP_INTERVAL=0.01 # consume ressources but faster response ...
+        bgsrv.SLEEP_INTERVAL=0.001 # consume ressources but faster response ...
          
 
     def run(self):
         self.handler_registered.wait()
-        t=transports[self.transport]
-        transport_kwargs=t['server_transport_kwargs']
+        t=transports[self.transport]()
+        transport_kwargs=t.server_transport_kwargs
         if self.transport_kwargs:
             opt_args=parse_transports_args(self.transport_kwargs)
             for val in opt_args:
-                if val.lower() in t['server_transport_kwargs']:
+                if val.lower() in t.server_transport_kwargs:
                     transport_kwargs[val.lower()]=opt_args[val]
                 else:
-                    logging.warning("unknown transport argument : %s"%tab[0])
-        if t['authenticator']:
-            authenticator=t['authenticator']()
+                    logging.warning("unknown transport argument : %s"%val)
+        if t.authenticator:
+            authenticator=t.authenticator()
         else:
             authenticator=None
         try:
-            self.server = t['server'](PupyService.PupyService, port = self.port, hostname=self.address, authenticator=authenticator, stream=t['stream'], transport=t['server_transport'], transport_kwargs=transport_kwargs, ipv6=self.ipv6)
+            t.parse_args(transport_kwargs)
+        except Exception as e:
+            logging.exception(e)
+        try:
+            self.server = t.server(PupyService.PupyService, port = self.port, hostname=self.address, authenticator=authenticator, stream=t.stream, transport=t.server_transport, transport_kwargs=t.server_transport_kwargs, ipv6=self.ipv6)
             self.server.start()
         except Exception as e:
             logging.exception(e)
-            exit(1)
 
 
